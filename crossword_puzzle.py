@@ -840,28 +840,30 @@ class CrosswordApp(ctk.CTk):
     def _give_hint(self):
         if not self.current_placed: return
 
-        # 커서가 있는 단어 우선, 없으면 전체에서 첫 번째 빈 셀
         idx = self.selected_word_idx
-        if 0 <= idx < len(self.current_placed):
-            ordered = [self.current_placed[idx]] + \
-                      [p for i, p in enumerate(self.current_placed) if i != idx]
-        else:
-            ordered = self.current_placed
+        if not (0 <= idx < len(self.current_placed)):
+            messagebox.showinfo("힌트", "먼저 셀을 클릭해 단어를 선택하세요.")
+            return
 
-        for p in ordered:
-            word = p['word']
-            wr, wc, wd = p['row'], p['col'], p['direction']
-            for i, ch in enumerate(word):
-                cr, cc = (wr, wc+i) if wd == 'A' else (wr+i, wc)
-                if (cr, cc) in self.cell_widgets:
-                    v = self.cell_widgets[(cr, cc)][1].get().upper()
-                    if v != ch:
-                        self.cell_widgets[(cr, cc)][1].set(ch)
-                        self._set_cell_bg(cr, cc, COLORS["gold"])
-                        self.hints_used += 1
-                        self.hint_label.configure(text=f"💡  힌트: {self.hints_used}")
-                        return
-        messagebox.showinfo("힌트", "모든 칸이 이미 채워졌습니다!")
+        p = self.current_placed[idx]
+        word = p['word']
+        wr, wc, wd = p['row'], p['col'], p['direction']
+
+        # 빈 칸 또는 틀린 글자 찾아서 수정
+        for i, ch in enumerate(word):
+            cr, cc = (wr, wc+i) if wd == 'A' else (wr+i, wc)
+            if (cr, cc) in self.cell_widgets:
+                v = self.cell_widgets[(cr, cc)][1].get().upper()
+                if v != ch:
+                    self.cell_widgets[(cr, cc)][1].set(ch)
+                    self._set_cell_bg(cr, cc, COLORS["gold"])
+                    self.hints_used += 1
+                    self.hint_label.configure(text=f"💡  힌트: {self.hints_used}")
+                    return
+
+        # 해당 단어가 이미 완성된 경우
+        d_str = "가로" if wd == 'A' else "세로"
+        messagebox.showinfo("힌트", f"{p.get('number','?')}번 {d_str} 단어는 이미 완성됐습니다!")
 
     def _reset_puzzle(self):
         for (r, c) in list(self.cell_widgets.keys()):
