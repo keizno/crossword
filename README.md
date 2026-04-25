@@ -2,7 +2,7 @@ pip install customtkinter openpyxl pillow reportlab
 
 pip install로 필요한 라이브러리 설치 후 더블클릭
 
-exe 로 만들때는..
+#exe 로 만들때는..
 
 PyInstaller 사용하시면 됩니다.
 1. 설치
@@ -13,7 +13,7 @@ pyinstaller --onefile --windowed crossword_puzzle.py
 
 4. 제대로 된 빌드 (권장)
 의존성이 많아서 spec 파일로 관리하는 게 낫습니다.
-# spec 파일 먼저 생성
+spec 파일 먼저 생성
 pyinstaller --onefile --windowed --name "CrosswordMaker" crossword_puzzle.py
 
 5. 생성된 CrosswordMaker.spec 파일을 열어서 hiddenimports 추가:
@@ -35,7 +35,7 @@ a = Analysis(
 6. 한글 폰트 같이 패키징할 경우
 나눔고딕이 없는 PC에서도 돌아가게 하려면 폰트 파일을 포함시켜야 합니다.
 
-# spec 파일 안에
+spec 파일 안에
 a = Analysis(
     ...
     datas=[
@@ -55,7 +55,7 @@ def _get_base_path():
         return sys._MEIPASS
     return os.path.dirname(os.path.abspath(__file__))
 
-# _register_korean_fonts() 안에 추가
+_register_korean_fonts() 안에 추가
 base = _get_base_path()
 candidates = [
     (os.path.join(base, 'NanumGothic.ttf'),
@@ -63,9 +63,9 @@ candidates = [
     # 기존 경로들...
 ]
 
-7. 그 다음 spec으로 빌드:
+8. 그 다음 spec으로 빌드:
 pyinstaller CrosswordMaker.spec
 
-8. dist/
+9. dist/
 └── CrosswordMaker.exe   ← 이걸 배포
 
