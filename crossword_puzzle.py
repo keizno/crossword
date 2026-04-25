@@ -230,6 +230,7 @@ class CrosswordApp(ctk.CTk):
         self.difficulty_filter = "전체"
         self.selected_direction = 'A'
         self.selected_word_idx = -1
+        self.selected_cell = None
         self.timer_running = False
         self.start_time = 0
         self.elapsed = 0
@@ -612,6 +613,7 @@ class CrosswordApp(ctk.CTk):
         self.score = 0
         self.selected_word_idx = -1
         self.selected_direction = 'A'
+        self.selected_cell = None
 
         self._draw_puzzle()
         self._build_clue_list()
@@ -716,7 +718,9 @@ class CrosswordApp(ctk.CTk):
             self.cell_widgets[target][0].focus_set()
 
     def _on_focus(self, row, col):
-        self._highlight_word(row, col)
+        toggle = (self.selected_cell == (row, col))
+        self.selected_cell = (row, col)
+        self._highlight_word(row, col, toggle=toggle)
 
     def _on_entry_change(self, row, col, var):
         self._update_progress()
@@ -730,24 +734,37 @@ class CrosswordApp(ctk.CTk):
         except: pass
         entry.configure(bg=color)
 
-    def _highlight_word(self, row, col):
+    def _highlight_word(self, row, col, toggle=False):
+        # 이 셀이 속한 가로/세로 단어 모두 찾기
+        matches = {}  # direction -> (p, cells)
+        for p in self.current_placed:
+            wr, wc, wd = p['row'], p['col'], p['direction']
+            cells = [(wr, wc+i) if wd == 'A' else (wr+i, wc) for i in range(len(p['word']))]
+            if (row, col) in cells:
+                matches[wd] = (p, cells)
+
+        if not matches:
+            return
+
+        # 방향 결정: toggle 시 반대 방향으로, 없으면 현재 방향 유지
+        if toggle and len(matches) == 2:
+            new_dir = 'D' if self.selected_direction == 'A' else 'A'
+        elif self.selected_direction in matches:
+            new_dir = self.selected_direction
+        else:
+            new_dir = next(iter(matches))
+
+        p, cells = matches[new_dir]
+
         # 모든 셀 초기화
         for (r, c) in self.cell_widgets:
             self._set_cell_bg(r, c, COLORS["cell_bg"])
 
-        # 해당 셀이 포함된 단어 하이라이트
-        for p in self.current_placed:
-            word = p['word']
-            wr, wc, wd = p['row'], p['col'], p['direction']
-            cells = [(wr, wc+i) if wd == 'A' else (wr+i, wc) for i in range(len(word))]
-            if (row, col) in cells:
-                self.selected_direction = wd
-                self.selected_word_idx = self.current_placed.index(p)
-                for cr, cc in cells:
-                    self._set_cell_bg(cr, cc, COLORS["highlight"])
-                # 현재 셀은 더 강하게
-                self._set_cell_bg(row, col, "#e94580")
-                break
+        self.selected_direction = new_dir
+        self.selected_word_idx = self.current_placed.index(p)
+        for cr, cc in cells:
+            self._set_cell_bg(cr, cc, COLORS["highlight"])
+        self._set_cell_bg(row, col, "#e94580")
 
     # ════════════════════════════════════════════════════════
     # 단서 목록
