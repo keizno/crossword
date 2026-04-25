@@ -15,9 +15,10 @@ pyinstaller --onefile --windowed crossword_puzzle.py
 4. 제대로 된 빌드 (권장)
 의존성이 많아서 spec 파일로 관리하는 게 낫습니다.
 spec 파일 먼저 생성
+
 pyinstaller --onefile --windowed --name "CrosswordMaker" crossword_puzzle.py
 
-5. 생성된 CrosswordMaker.spec 파일을 열어서 hiddenimports 추가:
+6. 생성된 CrosswordMaker.spec 파일을 열어서 hiddenimports 추가:
 
 a = Analysis(
     ['crossword_puzzle.py'],
