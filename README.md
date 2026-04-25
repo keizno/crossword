@@ -2,7 +2,8 @@ pip install customtkinter openpyxl pillow reportlab
 
 pip install로 필요한 라이브러리 설치 후 더블클릭
 
-#exe 로 만들때는..
+
+exe 로 만들때는..
 
 PyInstaller 사용하시면 됩니다.
 1. 설치
