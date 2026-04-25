@@ -6,15 +6,19 @@ exe 로 만들때는..
 
 PyInstaller 사용하시면 됩니다.
 1. 설치
-bashpip install pyinstaller
+pip install pyinstaller
+
 2. 단순 빌드 (테스트용)
-bashpyinstaller --onefile --windowed crossword_puzzle.py
-3. 제대로 된 빌드 (권장)
+pyinstaller --onefile --windowed crossword_puzzle.py
+
+4. 제대로 된 빌드 (권장)
 의존성이 많아서 spec 파일로 관리하는 게 낫습니다.
-bash# spec 파일 먼저 생성
+# spec 파일 먼저 생성
 pyinstaller --onefile --windowed --name "CrosswordMaker" crossword_puzzle.py
-생성된 CrosswordMaker.spec 파일을 열어서 hiddenimports 추가:
-pythona = Analysis(
+
+5. 생성된 CrosswordMaker.spec 파일을 열어서 hiddenimports 추가:
+
+a = Analysis(
     ['crossword_puzzle.py'],
     ...
     hiddenimports=[
@@ -27,11 +31,11 @@ pythona = Analysis(
     ],
     ...
 )
-그 다음 spec으로 빌드:
-bashpyinstaller CrosswordMaker.spec
-4. 한글 폰트 같이 패키징할 경우
+
+6. 한글 폰트 같이 패키징할 경우
 나눔고딕이 없는 PC에서도 돌아가게 하려면 폰트 파일을 포함시켜야 합니다.
-python# spec 파일 안에
+
+# spec 파일 안에
 a = Analysis(
     ...
     datas=[
@@ -40,8 +44,10 @@ a = Analysis(
     ],
     ...
 )
-그리고 코드에서 폰트 경로를 실행파일 기준으로 찾도록 수정:
-pythonimport sys, os
+
+7. 그리고 코드에서 폰트 경로를 실행파일 기준으로 찾도록 수정:
+   
+import sys, os
 
 def _get_base_path():
     # PyInstaller로 빌드된 경우 sys._MEIPASS 사용
@@ -56,8 +62,10 @@ candidates = [
      os.path.join(base, 'NanumGothicBold.ttf')),
     # 기존 경로들...
 ]
-5. 결과물 위치
-dist/
+
+7. 그 다음 spec으로 빌드:
+pyinstaller CrosswordMaker.spec
+
+8. dist/
 └── CrosswordMaker.exe   ← 이걸 배포
 
-air-gapped 환경 배포용이면 --onefile 대신 --onedir로 빌드하면 실행 속도가 훨씬 빠릅니다. --onefile은 실행 때마다 임시폴더에 압축 해제하느라 첫 로딩이 느립
