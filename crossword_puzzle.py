@@ -591,8 +591,9 @@ class CrosswordApp(ctk.CTk):
         wc_list = [(w, c) for w, c, _ in filtered]
         gen = CrosswordGenerator(wc_list, self.grid_rows, self.grid_cols, max_attempts=60)
 
-        # 생성 중 메시지
-        self.puzzle_placeholder.configure(text="⏳ 퍼즐 생성 중...")
+        # 생성 중 메시지 (placeholder가 살아있을 때만)
+        if self.puzzle_placeholder.winfo_exists():
+            self.puzzle_placeholder.configure(text="⏳ 퍼즐 생성 중...")
         self.update()
 
         grid, placed = gen.generate()
@@ -600,7 +601,8 @@ class CrosswordApp(ctk.CTk):
 
         if not grid or not placed:
             messagebox.showwarning("생성 실패", "단어 배치에 실패했습니다. 그리드 크기를 늘리거나 다시 시도하세요.")
-            self.puzzle_placeholder.configure(text="생성 실패 - 다시 시도해주세요")
+            if self.puzzle_placeholder.winfo_exists():
+                self.puzzle_placeholder.configure(text="생성 실패 - 다시 시도해주세요")
             return
 
         self.current_grid = grid
@@ -608,6 +610,8 @@ class CrosswordApp(ctk.CTk):
         self.cell_state = {}
         self.hints_used = 0
         self.score = 0
+        self.selected_word_idx = -1
+        self.selected_direction = 'A'
 
         self._draw_puzzle()
         self._build_clue_list()
