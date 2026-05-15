@@ -23,6 +23,13 @@ from reportlab.lib.enums import TA_CENTER, TA_LEFT
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 import io
+import sys
+
+# ── PyInstaller 단일 파일 exe 지원용 리소스 경로 함수 ──────────────
+def resource_path(relative_path: str) -> str:
+    """개발 환경과 PyInstaller --onefile 환경 모두에서 올바른 절대경로를 반환한다."""
+    base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(base, relative_path)
 
 # ── 한글 폰트 등록 ────────────────────────────────────────────────
 def _register_korean_fonts():
@@ -235,10 +242,15 @@ class CrosswordGenerator:
 class CrosswordApp(ctk.CTk):
     def __init__(self):
         super().__init__()
-        self.title("🔤 크로스워드 퍼즐 메이커 Pro - 한울교육훈련센터")
+        self.title("크로스워드 퍼즐 메이커 Pro - 한울교육훈련센터")
         self.geometry("1400x900")
         self.minsize(1100, 750)
         self.configure(fg_color=COLORS["bg"])
+
+        # ── 아이콘 적용 (개발 환경 & PyInstaller --onefile exe 공용) ──
+        _ico = resource_path("crossword.ico")
+        if os.path.exists(_ico):
+            self.iconbitmap(_ico)
 
         # State
         self.words_data = []          # [(word, clue, course, subject)]
@@ -1574,31 +1586,39 @@ class CrosswordApp(ctk.CTk):
         story.append(Paragraph(info_text, sub_style))
         story.append(Spacer(1, 4*mm))
 
+        # ── 4페이지 전용 중앙 정렬 스타일 추가 ──
+        center_clue_style = ParagraphStyle(
+            'kor_center_clue',
+            parent=clue_style,
+            alignment=TA_CENTER,
+            leftIndent=0,  # 기존 들여쓰기 제거 필수
+        )
+
         ans_rows = []
         # 번호 오름차순, 같은 번호는 가로(A) → 세로(D) 순
         for p in sorted(self.current_placed,
                         key=lambda x: (x.get('number', 99), 0 if x['direction'] == 'A' else 1)):
             d_sym = '→' if p['direction'] == 'A' else '↓'
             ans_rows.append([
-                Paragraph(f"{p.get('number','?')}", clue_style),
-                Paragraph(d_sym, clue_style),
+                Paragraph(f"{p.get('number','?')}", center_clue_style), # 중앙 정렬 스타일 적용
+                Paragraph(d_sym, center_clue_style),                    # 중앙 정렬 스타일 적용
                 Paragraph(p['clue'], clue_style),
                 Paragraph(p['word'], answer_style),
             ])
         if ans_rows:
-            # 1열: 번호(최대3자리=18mm), 2열: 화살표(10mm), 3열: 단서, 4열: 정답
-            ans_list_table = Table(ans_rows, colWidths=[18*mm, 10*mm, 100*mm, 40*mm])
+            # 1열 폭을 12mm로 줄여 1~3자리 모두 자연스럽게 배치 (총합 168mm로 A4 가용폭 내에 안정적으로 안착)
+            ans_list_table = Table(ans_rows, colWidths=[12*mm, 12*mm, 104*mm, 40*mm])
             ans_list_table.setStyle(TableStyle([
                 ('FONTNAME',        (0,0), (-1,-1), KOR_FONT),
                 ('FONTSIZE',        (0,0), (-1,-1), 10),
-                ('ALIGN',           (0,0), (1,-1), 'CENTER'),   # 번호·화살표 중앙정렬
-                ('ROWBACKGROUNDS',  (0,0), (-1,-1),
-                 [colors.HexColor('#eef4ff'), colors.white]),
+                ('ROWBACKGROUNDS',  (0,0), (-1,-1), [colors.HexColor('#eef4ff'), colors.white]),
                 ('GRID',            (0,0), (-1,-1), 0.3, colors.HexColor('#cccccc')),
                 ('VALIGN',          (0,0), (-1,-1), 'MIDDLE'),
-                ('LEFTPADDING',     (0,0), (-1,-1), 5),
-                ('TOPPADDING',      (0,0), (-1,-1), 3),
-                ('BOTTOMPADDING',   (0,0), (-1,-1), 3),
+                # 좌우 패딩을 대칭(4)으로 맞추어 완벽한 텍스트 중앙 정렬 구현
+                ('LEFTPADDING',     (0,0), (-1,-1), 4),
+                ('RIGHTPADDING',    (0,0), (-1,-1), 4),
+                ('TOPPADDING',      (0,0), (-1,-1), 5),
+                ('BOTTOMPADDING',   (0,0), (-1,-1), 5),
             ]))
             story.append(ans_list_table)
 
