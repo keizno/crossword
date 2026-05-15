@@ -9,7 +9,6 @@ import customtkinter as ctk
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 import openpyxl
-from PIL import Image, ImageDraw, ImageFont
 import random
 import json
 import os
@@ -98,6 +97,8 @@ class CrosswordGenerator:
 
     def _can_place(self, grid, word, r, c, direction):
         L = len(word)
+        # ── 기본 경계 검사 (음수 좌표도 차단 → wrap-around 버그 방지) ──
+        if r < 0 or c < 0: return False
         if direction == 'A':
             if c + L > self.cols: return False
             if c > 0 and grid[r][c-1] != '#': return False
@@ -107,8 +108,10 @@ class CrosswordGenerator:
                 if cell != '#' and cell != ch: return False
                 # 교차점 이외엔 같은 방향 인접 셀이 있으면 안 됨
                 if cell == '#':
+                    # 위 행이 존재하고 해당 셀이 비어있지 않으면 배치 불가
                     if r > 0 and grid[r-1][c+i] != '#': return False
-                    if r < self.rows-1 and grid[r+1][c+i] != '#': return False
+                    # 아래 행이 존재하고 해당 셀이 비어있지 않으면 배치 불가
+                    if r < self.rows - 1 and grid[r+1][c+i] != '#': return False
         else:  # 'D'
             if r + L > self.rows: return False
             if r > 0 and grid[r-1][c] != '#': return False
@@ -117,8 +120,10 @@ class CrosswordGenerator:
                 cell = grid[r+i][c]
                 if cell != '#' and cell != ch: return False
                 if cell == '#':
+                    # 왼쪽 열이 존재하고 해당 셀이 비어있지 않으면 배치 불가
                     if c > 0 and grid[r+i][c-1] != '#': return False
-                    if c < self.cols-1 and grid[r+i][c+1] != '#': return False
+                    # 오른쪽 열이 존재하고 해당 셀이 비어있지 않으면 배치 불가
+                    if c < self.cols - 1 and grid[r+i][c+1] != '#': return False
         return True
 
     def _place_word(self, grid, word, r, c, direction):
@@ -141,7 +146,7 @@ class CrosswordGenerator:
                 positions.append((r, c, 'A', 10))
             r = (self.rows - len(word)) // 2
             c = self.cols // 2
-            if self._can_place(grid, word, r, c, 'D'):
+            if r >= 0 and self._can_place(grid, word, r, c, 'D'):
                 positions.append((r, c, 'D', 10))
             return positions
 
@@ -152,13 +157,13 @@ class CrosswordGenerator:
                 ch = grid[r][c]
                 for i, wch in enumerate(word):
                     if wch == ch:
-                        # Across
+                        # Across: 시작 열이 0 이상인지 확인
                         tr, tc = r, c - i
-                        if self._can_place(grid, word, tr, tc, 'A'):
+                        if tc >= 0 and self._can_place(grid, word, tr, tc, 'A'):
                             positions.append((tr, tc, 'A', 5))
-                        # Down
+                        # Down: 시작 행이 0 이상인지 확인
                         tr, tc = r - i, c
-                        if self._can_place(grid, word, tr, tc, 'D'):
+                        if tr >= 0 and self._can_place(grid, word, tr, tc, 'D'):
                             positions.append((tr, tc, 'D', 5))
         return positions
 
@@ -174,9 +179,26 @@ class CrosswordGenerator:
             for word, clue in wc_list:
                 positions = self._find_positions(grid, word, len(placed))
                 if not positions: continue
-                r, c, direction, _ = random.choice(positions)
-                grid = self._place_word(grid, word, r, c, direction)
-                placed.append({'word': word, 'clue': clue, 'row': r, 'col': c, 'direction': direction})
+                random.shuffle(positions)
+                placed_ok = False
+                for r, c, direction, _ in positions:
+                    # ── 중복 배치 차단 ──────────────────────────────
+                    # 1) 동일 단어가 이미 배치된 경우
+                    if any(p['word'] == word for p in placed):
+                        continue
+                    # 2) 같은 방향·같은 시작점에 다른 단어가 이미 있는 경우
+                    #    (ES 배치 후 ESS가 같은 위치 같은 방향으로 들어오는 버그)
+                    if any(p['row'] == r and p['col'] == c and p['direction'] == direction
+                           for p in placed):
+                        continue
+                    # 3) 한 단어가 다른 단어를 완전히 포함(같은 방향)하는 경우 차단
+                    #    ex) 'ES'(A,r,c)가 있을 때 'ESS'(A,r,c) → 위에서 이미 차단
+                    #    역방향: 'ESS'가 먼저 있고 'ES'가 같은 시작 → 마지막 셀 뒤가 글자라 _can_place에서 차단됨
+                    grid = self._place_word(grid, word, r, c, direction)
+                    placed.append({'word': word, 'clue': clue,
+                                   'row': r, 'col': c, 'direction': direction})
+                    placed_ok = True
+                    break
 
             if len(placed) > len(best_placed):
                 best_placed = placed
@@ -213,20 +235,20 @@ class CrosswordGenerator:
 class CrosswordApp(ctk.CTk):
     def __init__(self):
         super().__init__()
-        self.title("🔤 크로스워드 퍼즐 메이커 Pro")
+        self.title("🔤 크로스워드 퍼즐 메이커 Pro - 한울교육훈련센터")
         self.geometry("1400x900")
         self.minsize(1100, 750)
         self.configure(fg_color=COLORS["bg"])
 
         # State
-        self.words_data = []          # [(word, clue, difficulty)]
+        self.words_data = []          # [(word, clue, course, subject)]
         self.current_grid = None
         self.current_placed = []
         self.numbered = {}            # (r,c) -> number
         self.cell_widgets = {}        # (r,c) -> Entry widget
         self.cell_state = {}          # (r,c) -> 'empty'|'correct'|'wrong'
-        self.grid_rows = 15
-        self.grid_cols = 15
+        self.grid_rows = 10
+        self.grid_cols = 10
         self.difficulty_filter = "전체"
         self.selected_direction = 'A'
         self.selected_word_idx = -1
@@ -258,7 +280,7 @@ class CrosswordApp(ctk.CTk):
         bar.pack(fill="x", pady=(0,2))
         bar.pack_propagate(False)
 
-        ctk.CTkLabel(bar, text="🔤  크로스워드 퍼즐 메이커  Pro",
+        ctk.CTkLabel(bar, text="계통약어 학습용 크로스워드 퍼즐",
                      font=ctk.CTkFont(size=22, weight="bold"),
                      text_color=COLORS["gold"]).pack(side="left", padx=20)
 
@@ -266,8 +288,6 @@ class CrosswordApp(ctk.CTk):
         btn_frame = ctk.CTkFrame(bar, fg_color="transparent")
         btn_frame.pack(side="right", padx=10)
 
-        self._icon_btn(btn_frame, "🖨️ 인쇄", self._print_puzzle).pack(side="right", padx=4)
-        self._icon_btn(btn_frame, "🖼️ 이미지 저장", self._save_image).pack(side="right", padx=4)
         self._icon_btn(btn_frame, "📄 PDF 저장", self._export_pdf).pack(side="right", padx=4)
         self._icon_btn(btn_frame, "💾 저장", self._save_puzzle).pack(side="right", padx=4)
         self._icon_btn(btn_frame, "📂 불러오기", self._load_puzzle).pack(side="right", padx=4)
@@ -299,41 +319,72 @@ class CrosswordApp(ctk.CTk):
                                               text_color=COLORS["gold"])
         self.word_count_label.pack(pady=2)
 
-        # 난이도
-        sec2 = self._section(left, "🎯 난이도 필터")
-        self.diff_var = ctk.StringVar(value="전체")
-        # 2×2 그리드로 배치해서 짤림 방지
-        diff_grid = ctk.CTkFrame(sec2, fg_color="transparent")
-        diff_grid.pack(fill="x", padx=4, pady=(2,6))
-        diff_items = [("전체", "#2d4a7a"), ("하 ✅", "#1a5c2a"), ("중 ⚡", "#5c4a1a"), ("상 🔥", "#5c1a1a")]
-        diff_vals  = ["전체", "하", "중", "상"]
-        for idx, ((label, _), val) in enumerate(zip(diff_items, diff_vals)):
-            rb = ctk.CTkRadioButton(diff_grid, text=label, variable=self.diff_var,
-                                    value=val, command=self._on_diff_change,
-                                    fg_color=COLORS["accent"],
-                                    font=ctk.CTkFont(size=13))
-            rb.grid(row=idx//2, column=idx%2, sticky="w", padx=8, pady=3)
+        # 과정명 / 교과목 선택
+        sec2 = self._section(left, "🎯 과정명 / 교과목 선택")
+
+        # 과정명 드롭다운
+        ctk.CTkLabel(sec2, text="과정명:", font=ctk.CTkFont(size=12),
+                     text_color=COLORS["subtext"]).pack(anchor="w", padx=8, pady=(2,0))
+        self.course_var = ctk.StringVar(value="전체")
+        self.course_menu = ctk.CTkOptionMenu(
+            sec2, variable=self.course_var,
+            values=["전체"],
+            command=self._on_course_change,
+            fg_color=COLORS["card"],
+            button_color=COLORS["accent2"],
+            dropdown_fg_color=COLORS["panel"],
+            width=240
+        )
+        self.course_menu.pack(fill="x", padx=8, pady=(2, 6))
+
+        # 교과목 다중선택 (드롭다운 체크박스)
+        ctk.CTkLabel(sec2, text="교과목 (다중선택):", font=ctk.CTkFont(size=12),
+                     text_color=COLORS["subtext"]).pack(anchor="w", padx=8, pady=(2,0))
+
+        # 교과목 선택 버튼 (클릭 시 팝업 패널 열림)
+        self.subject_btn = ctk.CTkButton(
+            sec2, text="▼  교과목 선택 (0개 선택)",
+            command=self._open_subject_picker,
+            fg_color=COLORS["card"],
+            hover_color=COLORS["accent2"],
+            font=ctk.CTkFont(size=12),
+            anchor="w"
+        )
+        self.subject_btn.pack(fill="x", padx=8, pady=(2, 4))
+
+        # 선택된 교과목 표시 레이블
+        self.subject_info_label = ctk.CTkLabel(
+            sec2, text="(과정명을 먼저 선택하세요)",
+            text_color=COLORS["subtext"],
+            font=ctk.CTkFont(size=10),
+            wraplength=230
+        )
+        self.subject_info_label.pack(anchor="w", padx=8, pady=(0,4))
+
+        # 내부 상태
+        self.selected_subjects = set()   # 선택된 교과목명
+        self.diff_var = ctk.StringVar(value="전체")  # 하위 호환용
 
         # 그리드 설정
         sec3 = self._section(left, "⚙️ 그리드 설정")
         row_frame = ctk.CTkFrame(sec3, fg_color="transparent")
         row_frame.pack(fill="x", pady=2)
         ctk.CTkLabel(row_frame, text="행:", width=40).pack(side="left")
-        self.row_var = ctk.IntVar(value=15)
-        ctk.CTkSlider(row_frame, from_=8, to=25, variable=self.row_var,
-                      number_of_steps=17, width=140,
+        self.row_var = ctk.IntVar(value=10)
+        ctk.CTkSlider(row_frame, from_=8, to=15, variable=self.row_var,
+                      number_of_steps=7, width=140,
                       command=lambda v: self.row_val.configure(text=f"{int(v)}")).pack(side="left", padx=4)
-        self.row_val = ctk.CTkLabel(row_frame, text="15", width=30)
+        self.row_val = ctk.CTkLabel(row_frame, text="10", width=30)
         self.row_val.pack(side="left")
 
         col_frame = ctk.CTkFrame(sec3, fg_color="transparent")
         col_frame.pack(fill="x", pady=2)
         ctk.CTkLabel(col_frame, text="열:", width=40).pack(side="left")
-        self.col_var = ctk.IntVar(value=15)
-        ctk.CTkSlider(col_frame, from_=8, to=25, variable=self.col_var,
-                      number_of_steps=17, width=140,
+        self.col_var = ctk.IntVar(value=10)
+        ctk.CTkSlider(col_frame, from_=8, to=15, variable=self.col_var,
+                      number_of_steps=7, width=140,
                       command=lambda v: self.col_val.configure(text=f"{int(v)}")).pack(side="left", padx=4)
-        self.col_val = ctk.CTkLabel(col_frame, text="15", width=30)
+        self.col_val = ctk.CTkLabel(col_frame, text="10", width=30)
         self.col_val.pack(side="left")
 
         # 단어 길이 필터
@@ -552,25 +603,243 @@ class CrosswordApp(ctk.CTk):
         except Exception as e:
             messagebox.showerror("오류", f"파일 읽기 실패:\n{e}")
 
+    # ════════════════════════════════════════════════════════
+    # 엑셀 로드
+    # ════════════════════════════════════════════════════════
+    def _load_excel(self):
+        path = filedialog.askopenfilename(
+            title="엑셀 파일 선택",
+            filetypes=[("Excel files", "*.xlsx *.xls"), ("All files", "*.*")]
+        )
+        if not path: return
+        try:
+            wb = openpyxl.load_workbook(path)
+            ws = wb.active
+            self.words_data = []
+            for row in ws.iter_rows(min_row=2, values_only=True):
+                if not row[0] or not row[1]: continue
+                clue    = str(row[0]).strip()
+                word    = str(row[1]).strip().upper()
+                course  = str(row[2]).strip() if len(row) > 2 and row[2] else "미분류"
+                subject = str(row[3]).strip() if len(row) > 3 and row[3] else "미분류"
+                if word.isalpha():
+                    self.words_data.append((word, clue, course, subject))
+
+            fname = os.path.basename(path)
+            self.file_label.configure(text=fname)
+            self.word_count_label.configure(text=f"단어: {len(self.words_data)}개")
+            self._refresh_course_menu()
+            self._update_word_list()
+            messagebox.showinfo("로드 완료", f"총 {len(self.words_data)}개 단어를 불러왔습니다.")
+        except Exception as e:
+            messagebox.showerror("오류", f"파일 읽기 실패:\n{e}")
+
+    def _refresh_course_menu(self):
+        """과정명 드롭다운 목록 갱신"""
+        courses = sorted(set(d[2] for d in self.words_data))
+        values = ["전체"] + courses
+        self.course_menu.configure(values=values)
+        self.course_var.set("전체")
+        self.selected_subjects.clear()
+        self._update_subject_btn_label()
+
+    def _on_course_change(self, value=None):
+        """과정명 변경 시 교과목 선택 초기화"""
+        self.selected_subjects.clear()
+        self._update_subject_btn_label()
+        self._update_word_list()
+
+    def _get_subjects_for_course(self):
+        """현재 선택된 과정명에 해당하는 교과목 목록 반환"""
+        course = self.course_var.get()
+        if course == "전체":
+            subjects = sorted(set(d[3] for d in self.words_data))
+        else:
+            subjects = sorted(set(d[3] for d in self.words_data if d[2] == course))
+        return subjects
+
+    def _open_subject_picker(self):
+        """교과목 체크박스 팝업 창"""
+        subjects = self._get_subjects_for_course()
+        if not subjects:
+            messagebox.showinfo("알림", "먼저 엑셀 파일을 로드하세요.")
+            return
+
+        win = tk.Toplevel(self)
+        win.title("교과목 선택")
+        win.configure(bg=COLORS["bg"])
+        win.resizable(False, False)
+
+        # 창 위치: 부모 창 기준
+        x = self.winfo_x() + 100
+        y = self.winfo_y() + 200
+        win.geometry(f"320x500+{x}+{y}")
+        win.grab_set()
+
+        # 헤더
+        hdr = tk.Frame(win, bg=COLORS["panel"], height=40)
+        hdr.pack(fill="x")
+        hdr.pack_propagate(False)
+        tk.Label(hdr, text="📚 교과목 선택", bg=COLORS["panel"],
+                 fg=COLORS["gold"], font=("Arial", 13, "bold")).pack(side="left", padx=12, pady=8)
+
+        # 전체선택 / 전체해제 버튼
+        btn_bar = tk.Frame(win, bg=COLORS["card"])
+        btn_bar.pack(fill="x", padx=8, pady=4)
+        check_vars = {}
+
+        def select_all():
+            for var in check_vars.values():
+                var.set(True)
+
+        def deselect_all():
+            for var in check_vars.values():
+                var.set(False)
+
+        tk.Button(btn_bar, text="전체 선택", bg=COLORS["accent2"], fg="white",
+                  bd=0, padx=8, command=select_all).pack(side="left", padx=4, pady=4)
+        tk.Button(btn_bar, text="전체 해제", bg=COLORS["card"], fg=COLORS["text"],
+                  bd=0, padx=8, command=deselect_all).pack(side="left", padx=4, pady=4)
+
+        # 검색 필터
+        search_var = tk.StringVar()
+        search_entry = tk.Entry(btn_bar, textvariable=search_var,
+                                bg=COLORS["empty"], fg=COLORS["text"],
+                                insertbackground=COLORS["accent"],
+                                bd=1, relief="flat", width=14)
+        search_entry.pack(side="right", padx=6, pady=4)
+        tk.Label(btn_bar, text="🔍", bg=COLORS["card"],
+                 fg=COLORS["subtext"]).pack(side="right")
+
+        # 스크롤 영역
+        scroll_frame_outer = tk.Frame(win, bg=COLORS["bg"])
+        scroll_frame_outer.pack(fill="both", expand=True, padx=8, pady=4)
+
+        canvas = tk.Canvas(scroll_frame_outer, bg=COLORS["bg"], bd=0, highlightthickness=0)
+        scrollbar = tk.Scrollbar(scroll_frame_outer, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        scrollbar.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True)
+
+        inner = tk.Frame(canvas, bg=COLORS["bg"])
+        canvas_window = canvas.create_window((0, 0), window=inner, anchor="nw")
+
+        def on_resize(event):
+            canvas.itemconfig(canvas_window, width=event.width)
+        canvas.bind("<Configure>", on_resize)
+
+        def on_frame_configure(event):
+            canvas.configure(scrollregion=canvas.bbox("all"))
+        inner.bind("<Configure>", on_frame_configure)
+
+        # 마우스 휠 스크롤
+        def _on_mousewheel(event):
+            canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+        canvas.bind_all("<MouseWheel>", _on_mousewheel)
+
+        # 체크박스 생성
+        all_check_frames = []
+
+        def build_checkboxes(filter_text=""):
+            for w in inner.winfo_children():
+                w.destroy()
+            all_check_frames.clear()
+            for subj in subjects:
+                if filter_text and filter_text.lower() not in subj.lower():
+                    continue
+                var = check_vars.setdefault(subj, tk.BooleanVar(value=(subj in self.selected_subjects)))
+                f = tk.Frame(inner, bg=COLORS["bg"])
+                f.pack(fill="x", padx=4, pady=1)
+                cb = tk.Checkbutton(f, text=subj, variable=var,
+                                    bg=COLORS["bg"], fg=COLORS["text"],
+                                    selectcolor=COLORS["card"],
+                                    activebackground=COLORS["bg"],
+                                    activeforeground=COLORS["gold"],
+                                    anchor="w", font=("Arial", 11))
+                cb.pack(fill="x")
+                all_check_frames.append(f)
+
+        build_checkboxes()
+
+        def on_search_change(*args):
+            build_checkboxes(search_var.get())
+        search_var.trace_add("write", on_search_change)
+
+        # 확인 버튼
+        def confirm():
+            self.selected_subjects = {subj for subj, var in check_vars.items() if var.get()}
+            self._update_subject_btn_label()
+            self._update_word_list()
+            canvas.unbind_all("<MouseWheel>")
+            win.destroy()
+
+        def on_close():
+            canvas.unbind_all("<MouseWheel>")
+            win.destroy()
+
+        win.protocol("WM_DELETE_WINDOW", on_close)
+
+        foot = tk.Frame(win, bg=COLORS["panel"], height=44)
+        foot.pack(fill="x", side="bottom")
+        foot.pack_propagate(False)
+        tk.Button(foot, text="✅  확인", bg=COLORS["accent"], fg="white",
+                  font=("Arial", 12, "bold"), bd=0, padx=20,
+                  command=confirm).pack(pady=8)
+
+    def _update_subject_btn_label(self):
+        cnt = len(self.selected_subjects)
+        if cnt == 0:
+            self.subject_btn.configure(text="▼  교과목 선택 (전체)")
+            self.subject_info_label.configure(text="(전체 교과목 포함)")
+        else:
+            preview = ", ".join(sorted(self.selected_subjects)[:3])
+            if cnt > 3:
+                preview += f" 외 {cnt-3}개"
+            self.subject_btn.configure(text=f"▼  교과목 선택 ({cnt}개 선택)")
+            self.subject_info_label.configure(text=preview)
+
     def _update_word_list(self):
         self.word_list_box.configure(state="normal")
         self.word_list_box.delete("1.0", "end")
+
+        # 교과목 미선택 시 안내 문구
+        if not self.selected_subjects:
+            course = self.course_var.get()
+            if course == "전체" or not self.words_data:
+                self.word_list_box.insert("end", "📌 과정명을 선택 후\n교과목을 선택하세요.\n")
+            else:
+                self.word_list_box.insert("end", f"📌 '{course}' 과정의\n교과목을 선택하세요.\n")
+            self.word_list_box.configure(state="disabled")
+            return
+
         filtered = self._get_filtered_words()
         hide = self.show_answers_var.get()
-        for w, c, d in filtered:
-            answer = "?" * len(w) if hide else w
-            self.word_list_box.insert("end", f"[{d}] {answer} - {c}\n")
+        if filtered:
+            for w, c, course, subj in filtered:
+                answer = "?" * len(w) if hide else w
+                self.word_list_box.insert("end", f"[{subj}] {answer} - {c}\n")
+        else:
+            self.word_list_box.insert("end", "선택한 조건에 해당하는\n단어가 없습니다.\n")
         self.word_list_box.configure(state="disabled")
 
     def _get_filtered_words(self):
-        diff = self.diff_var.get()
+        course = self.course_var.get()
         min_l = self.min_len.get()
         max_l = self.max_len.get()
         result = []
-        for w, c, d in self.words_data:
-            if diff != "전체" and d != diff: continue
-            if not (min_l <= len(w) <= max_l): continue
-            result.append((w, c, d))
+        for item in self.words_data:
+            w, c, crs, subj = item
+            # 과정명 필터
+            if course != "전체" and crs != course:
+                continue
+            # 교과목 필터 (선택된 교과목이 없으면 빈 결과 반환 — 단어 목록/생성 모두 막힘)
+            if subj not in self.selected_subjects:
+                continue
+            # 단어 길이 필터
+            if not (min_l <= len(w) <= max_l):
+                continue
+            result.append((w, c, crs, subj))
         return result
 
     def _on_diff_change(self):
@@ -583,13 +852,13 @@ class CrosswordApp(ctk.CTk):
         filtered = self._get_filtered_words()
         if len(filtered) < 3:
             messagebox.showwarning("단어 부족",
-                "최소 3개 이상의 단어가 필요합니다.\n엑셀 파일을 로드하거나 난이도 필터를 확인하세요.")
+                "최소 3개 이상의 단어가 필요합니다.\n엑셀 파일을 로드하거나 필터를 확인하세요.")
             return
 
         self.grid_rows = self.row_var.get()
         self.grid_cols = self.col_var.get()
 
-        wc_list = [(w, c) for w, c, _ in filtered]
+        wc_list = [(w, c) for w, c, crs, subj in filtered]
         gen = CrosswordGenerator(wc_list, self.grid_rows, self.grid_cols, max_attempts=60)
 
         # 생성 중 메시지 (placeholder가 살아있을 때만)
@@ -984,7 +1253,10 @@ class CrosswordApp(ctk.CTk):
             "numbered": {f"{k[0]},{k[1]}": v for k, v in self.numbered.items()},
             "rows": self.grid_rows,
             "cols": self.grid_cols,
-            "words_data": [{"word": w, "clue": c, "diff": d} for w, c, d in self.words_data],
+            "words_data": [
+                {"word": w, "clue": c, "course": crs, "subject": subj}
+                for w, c, crs, subj in self.words_data
+            ],
         }
         with open(path, 'w', encoding='utf-8') as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
@@ -1003,17 +1275,32 @@ class CrosswordApp(ctk.CTk):
             self.current_placed = data["placed"]
             self.numbered = {tuple(int(x) for x in k.split(',')): v
                              for k, v in data.get("numbered", {}).items()}
-            self.grid_rows = data["rows"]
-            self.grid_cols = data["cols"]
-            # words_data 복원 (구버전 파일에는 없을 수 있으므로 get 사용)
+
+            # 그리드 크기 복원 + 슬라이더/레이블 동기화 (범위 8~15로 클램핑)
+            self.grid_rows = max(8, min(15, data["rows"]))
+            self.grid_cols = max(8, min(15, data["cols"]))
+            self.row_var.set(self.grid_rows)
+            self.col_var.set(self.grid_cols)
+            self.row_val.configure(text=str(self.grid_rows))
+            self.col_val.configure(text=str(self.grid_cols))
+
+            # words_data 복원 (신규 포맷: course/subject, 구버전: diff)
             raw_words = data.get("words_data", [])
             if raw_words:
-                self.words_data = [(item["word"], item["clue"], item.get("diff", "중"))
-                                   for item in raw_words]
+                self.words_data = []
+                for item in raw_words:
+                    w   = item["word"]
+                    c   = item["clue"]
+                    # 구버전(diff) → course/subject 호환
+                    crs  = item.get("course", item.get("diff", "미분류"))
+                    subj = item.get("subject", "미분류")
+                    self.words_data.append((w, c, crs, subj))
                 fname = os.path.basename(path)
                 self.file_label.configure(text=f"[JSON] {fname}")
                 self.word_count_label.configure(text=f"단어: {len(self.words_data)}개")
+                self._refresh_course_menu()
                 self._update_word_list()
+
             self.cell_state = {}
             self.hints_used = 0
             self._draw_puzzle()
@@ -1023,103 +1310,6 @@ class CrosswordApp(ctk.CTk):
             messagebox.showinfo("불러오기 완료", "퍼즐을 불러왔습니다!")
         except Exception as e:
             messagebox.showerror("오류", f"불러오기 실패:\n{e}")
-
-    # ════════════════════════════════════════════════════════
-    # 이미지 저장
-    # ════════════════════════════════════════════════════════
-    def _save_image(self):
-        if not self.current_grid:
-            messagebox.showwarning("저장 실패", "생성된 퍼즐이 없습니다.")
-            return
-        path = filedialog.asksaveasfilename(
-            defaultextension=".png",
-            filetypes=[("PNG Image", "*.png"), ("JPEG Image", "*.jpg")],
-            title="이미지로 저장"
-        )
-        if not path: return
-        img = self._render_puzzle_image()
-        img.save(path)
-        messagebox.showinfo("저장 완료", f"이미지가 저장되었습니다:\n{path}")
-
-    def _render_puzzle_image(self, cell_size=40, show_answers=False):
-        rows, cols = self.grid_rows, self.grid_cols
-        margin = 20
-        clue_width = 320
-        W = cols * cell_size + 2 * margin + clue_width
-        H = rows * cell_size + 2 * margin + 60
-
-        img = Image.new('RGB', (W, H), color=(26, 26, 46))
-        draw = ImageDraw.Draw(img)
-
-        try:
-            kor_ttf    = "/usr/share/fonts/truetype/nanum/NanumGothic.ttf"
-            kor_bold   = "/usr/share/fonts/truetype/nanum/NanumGothicBold.ttf"
-            font_big   = ImageFont.truetype(kor_bold, 16)
-            font_small = ImageFont.truetype(kor_ttf,  11)
-            font_num   = ImageFont.truetype(kor_ttf,  9)
-            font_title = ImageFont.truetype(kor_bold, 20)
-        except:
-            try:
-                font_big   = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 16)
-                font_small = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 10)
-                font_num   = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 9)
-                font_title = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 20)
-            except:
-                font_big = font_small = font_num = font_title = ImageFont.load_default()
-
-        # 제목
-        draw.text((margin, 8), "CROSSWORD PUZZLE", fill=(245, 166, 35), font=font_title)
-
-        # 그리드
-        for r in range(rows):
-            for c in range(cols):
-                x = margin + c * cell_size
-                y = 50 + r * cell_size
-                val = self.current_grid[r][c]
-                if val == '#':
-                    draw.rectangle([x, y, x+cell_size, y+cell_size], fill=(13, 27, 42))
-                else:
-                    draw.rectangle([x, y, x+cell_size, y+cell_size],
-                                   fill=(30, 42, 69), outline=(45, 74, 122), width=1)
-                    if (r, c) in self.numbered:
-                        draw.text((x+2, y+1), str(self.numbered[(r,c)]),
-                                  fill=(160, 196, 255), font=font_num)
-                    if show_answers:
-                        draw.text((x + cell_size//2 - 5, y + cell_size//2 - 8),
-                                  val, fill=(224, 224, 224), font=font_big)
-                    else:
-                        # 현재 입력값 표시
-                        if (r, c) in self.cell_widgets:
-                            user_val = self.cell_widgets[(r, c)][1].get().upper()
-                            if user_val:
-                                draw.text((x + cell_size//2 - 5, y + cell_size//2 - 8),
-                                          user_val, fill=(224, 224, 224), font=font_big)
-
-        # 단서 목록
-        cx = margin + cols * cell_size + 15
-        cy = 50
-        draw.text((cx, cy), "→ 가로", fill=(245, 166, 35), font=font_big)
-        cy += 24
-        across = sorted([p for p in self.current_placed if p['direction'] == 'A'],
-                        key=lambda x: x.get('number', 99))
-        for p in across:
-            txt = f"{p.get('number','?')}. {p['clue']} ({len(p['word'])})"
-            draw.text((cx, cy), txt, fill=(200, 200, 200), font=font_small)
-            cy += 16
-            if cy > H - 60: break
-
-        cy += 10
-        draw.text((cx, cy), "↓ 세로", fill=(245, 166, 35), font=font_big)
-        cy += 24
-        down = sorted([p for p in self.current_placed if p['direction'] == 'D'],
-                      key=lambda x: x.get('number', 99))
-        for p in down:
-            txt = f"{p.get('number','?')}. {p['clue']} ({len(p['word'])})"
-            draw.text((cx, cy), txt, fill=(200, 200, 200), font=font_small)
-            cy += 16
-            if cy > H - 20: break
-
-        return img
 
     # ════════════════════════════════════════════════════════
     # PDF 내보내기
@@ -1141,46 +1331,54 @@ class CrosswordApp(ctk.CTk):
             messagebox.showerror("오류", f"PDF 생성 실패:\n{e}")
 
     def _create_pdf(self, path):
-        """한글 폰트(나눔고딕)를 적용한 PDF 생성"""
-        from reportlab.platypus import PageBreak
+        """3페이지 PDF 생성
+        1페이지: 퍼즐 그리드
+        2페이지: 단서 (가로 / 세로)
+        3페이지: 정답
+        """
+        from reportlab.platypus import PageBreak, KeepInFrame
 
         PAGE_W, PAGE_H = A4
         doc = SimpleDocTemplate(path, pagesize=A4,
                                 leftMargin=15*mm, rightMargin=15*mm,
                                 topMargin=15*mm, bottomMargin=15*mm)
 
-        # ── 스타일 (모두 KorFont 사용) ──────────────────────────
+        # ── 공통 스타일 ─────────────────────────────────────
         title_style = ParagraphStyle(
             'kor_title',
-            fontName=KOR_FONT_BOLD, fontSize=20,
+            fontName=KOR_FONT_BOLD, fontSize=22,
             textColor=colors.HexColor('#0f3460'),
-            spaceAfter=4, alignment=TA_CENTER,
-            leading=26,
+            spaceAfter=3, alignment=TA_CENTER, leading=28,
+        )
+        page_title_style = ParagraphStyle(
+            'kor_page_title',
+            fontName=KOR_FONT_BOLD, fontSize=16,
+            textColor=colors.HexColor('#0f3460'),
+            spaceAfter=3, alignment=TA_CENTER, leading=22,
         )
         sub_style = ParagraphStyle(
             'kor_sub',
             fontName=KOR_FONT, fontSize=10,
             textColor=colors.HexColor('#555555'),
-            spaceAfter=6, alignment=TA_CENTER,
+            spaceAfter=8, alignment=TA_CENTER,
         )
         heading_style = ParagraphStyle(
             'kor_heading',
-            fontName=KOR_FONT_BOLD, fontSize=12,
+            fontName=KOR_FONT_BOLD, fontSize=13,
             textColor=colors.HexColor('#0f3460'),
-            spaceAfter=4, spaceBefore=6,
-            borderPad=2,
+            spaceAfter=4, spaceBefore=8,
         )
         clue_style = ParagraphStyle(
             'kor_clue',
-            fontName=KOR_FONT, fontSize=9,
+            fontName=KOR_FONT, fontSize=10,
             textColor=colors.HexColor('#222222'),
-            spaceAfter=2, leftIndent=12, leading=13,
+            spaceAfter=3, leftIndent=8, leading=14,
         )
         answer_style = ParagraphStyle(
             'kor_answer',
-            fontName=KOR_FONT_BOLD, fontSize=9,
+            fontName=KOR_FONT_BOLD, fontSize=10,
             textColor=colors.HexColor('#0f3460'),
-            spaceAfter=2, leftIndent=12,
+            spaceAfter=2, leftIndent=8,
         )
         num_cell_style = ParagraphStyle(
             'kor_numcell',
@@ -1189,25 +1387,33 @@ class CrosswordApp(ctk.CTk):
             leading=7,
         )
 
+        # ── 공통 정보 ────────────────────────────────────────
+        course_label = self.course_var.get()
+        subj_cnt = len(self.selected_subjects)
+        subj_label = f"{subj_cnt}개 교과목" if subj_cnt > 0 else "전체 교과목"
+        info_text = (f"과정명: {course_label}  |  {subj_label}  |  "
+                     f"단어 수: {len(self.current_placed)}개  |  "
+                     f"그리드: {self.grid_rows}×{self.grid_cols}")
+
+        rows, cols = self.grid_rows, self.grid_cols
+        avail_w = PAGE_W - 30*mm
+        CELL_MM = min(16, avail_w / cols / mm)
+
+        across = sorted([p for p in self.current_placed if p['direction'] == 'A'],
+                        key=lambda x: x.get('number', 99))
+        down   = sorted([p for p in self.current_placed if p['direction'] == 'D'],
+                        key=lambda x: x.get('number', 99))
+
         story = []
 
-        # ── 제목 ────────────────────────────────────────────────
-        diff_label = {"전체": "전체", "하": "하(Easy)", "중": "중(Normal)", "상": "상(Hard)"}.get(
-            self.diff_var.get(), "전체")
-        story.append(Paragraph("크로스워드 퍼즐 (Crossword Puzzle)", title_style))
-        story.append(Paragraph(
-            f"난이도: {diff_label}  |  단어 수: {len(self.current_placed)}개  |  "
-            f"그리드: {self.grid_rows}×{self.grid_cols}", sub_style))
-        story.append(Spacer(1, 4*mm))
+        # ════════════════════════════════════════════════════
+        # 1페이지: 퍼즐 그리드
+        # ════════════════════════════════════════════════════
+        story.append(Paragraph("크로스워드 퍼즐", title_style))
+        story.append(Paragraph(info_text, sub_style))
+        story.append(Spacer(1, 6*mm))
 
-        # ── 퍼즐 그리드 테이블 ──────────────────────────────────
-        rows, cols = self.grid_rows, self.grid_cols
-
-        # 셀 크기: 가용 너비에 맞게 자동 조정
-        avail_w = PAGE_W - 30*mm
-        CELL_MM = min(14, avail_w / cols / mm)
-        CELL = CELL_MM
-
+        # 그리드 테이블
         table_data = []
         for r in range(rows):
             row_data = []
@@ -1220,119 +1426,183 @@ class CrosswordApp(ctk.CTk):
                     row_data.append(Paragraph(num_str, num_cell_style))
             table_data.append(row_data)
 
-        col_widths  = [CELL * mm] * cols
-        row_heights = [CELL * mm] * rows
+        col_widths  = [CELL_MM * mm] * cols
+        row_heights = [CELL_MM * mm] * rows
         grid_table  = Table(table_data, colWidths=col_widths, rowHeights=row_heights)
 
         ts = TableStyle([
-            ('GRID',   (0,0), (-1,-1), 0.6, colors.HexColor('#2d4a7a')),
-            ('VALIGN', (0,0), (-1,-1), 'TOP'),
-            ('LEFTPADDING',  (0,0), (-1,-1), 1),
-            ('TOPPADDING',   (0,0), (-1,-1), 1),
-            ('RIGHTPADDING', (0,0), (-1,-1), 0),
-            ('BOTTOMPADDING',(0,0), (-1,-1), 0),
+            ('GRID',            (0,0), (-1,-1), 0.7, colors.HexColor('#2d4a7a')),
+            ('VALIGN',          (0,0), (-1,-1), 'TOP'),
+            ('LEFTPADDING',     (0,0), (-1,-1), 1),
+            ('TOPPADDING',      (0,0), (-1,-1), 1),
+            ('RIGHTPADDING',    (0,0), (-1,-1), 0),
+            ('BOTTOMPADDING',   (0,0), (-1,-1), 0),
         ])
         for r in range(rows):
             for c in range(cols):
                 if self.current_grid[r][c] == '#':
                     ts.add('BACKGROUND', (c,r), (c,r), colors.HexColor('#1a1a2e'))
-                    ts.add('GRID', (c,r), (c,r), 0, colors.HexColor('#1a1a2e'))
+                    ts.add('GRID',       (c,r), (c,r), 0, colors.HexColor('#1a1a2e'))
                 else:
                     ts.add('BACKGROUND', (c,r), (c,r), colors.white)
         grid_table.setStyle(ts)
-        story.append(grid_table)
-        story.append(Spacer(1, 6*mm))
 
-        # ── 단서 목록 (가로 / 세로 나란히) ─────────────────────
-        across = sorted([p for p in self.current_placed if p['direction'] == 'A'],
-                        key=lambda x: x.get('number', 99))
-        down   = sorted([p for p in self.current_placed if p['direction'] == 'D'],
-                        key=lambda x: x.get('number', 99))
+        # 그리드를 페이지 중앙에 배치
+        grid_w = CELL_MM * mm * cols
+        grid_offset = (avail_w - grid_w) / 2
+        if grid_offset > 0:
+            centered = Table([[grid_table]], colWidths=[avail_w])
+            centered.setStyle(TableStyle([
+                ('ALIGN',   (0,0), (-1,-1), 'CENTER'),
+                ('VALIGN',  (0,0), (-1,-1), 'TOP'),
+                ('LEFTPADDING',  (0,0), (-1,-1), 0),
+                ('RIGHTPADDING', (0,0), (-1,-1), 0),
+                ('TOPPADDING',   (0,0), (-1,-1), 0),
+                ('BOTTOMPADDING',(0,0), (-1,-1), 0),
+            ]))
+            story.append(centered)
+        else:
+            story.append(grid_table)
 
-        def clue_paragraphs(word_list, symbol):
-            items = [Paragraph(f"{symbol} 단서", heading_style)]
+        # ════════════════════════════════════════════════════
+        # 2페이지: 단서
+        # ════════════════════════════════════════════════════
+        story.append(PageBreak())
+        story.append(Paragraph("단서 (Clues)", page_title_style))
+        story.append(Paragraph(info_text, sub_style))
+        story.append(Spacer(1, 4*mm))
+
+        def make_clue_list(word_list, symbol):
+            items = [Paragraph(symbol, heading_style)]
             for p in word_list:
-                num = p.get('number', '?')
-                txt = f"{num}. {p['clue']}  ({len(p['word'])}글자)"
+                num  = p.get('number', '?')
+                txt  = f"{num}.  {p['clue']}  ({len(p['word'])}글자)"
                 items.append(Paragraph(txt, clue_style))
             return items
 
-        # 가로/세로를 두 컬럼으로 배치
-        across_paras = clue_paragraphs(across, "→ 가로")
-        down_paras   = clue_paragraphs(down,   "↓ 세로")
+        across_items = make_clue_list(across, "→ 가로")
+        down_items   = make_clue_list(down,   "↓ 세로")
 
-        # 두 컬럼 테이블에 넣기
-        from reportlab.platypus import KeepInFrame
-        half_w = (PAGE_W - 30*mm) / 2 - 4*mm
-        col_a = KeepInFrame(half_w, 200*mm, across_paras, mode='shrink')
-        col_d = KeepInFrame(half_w, 200*mm, down_paras,   mode='shrink')
-        clue_table = Table([[col_a, col_d]],
-                           colWidths=[half_w, half_w])
+        half_w = (avail_w) / 2 - 4*mm
+        col_a = KeepInFrame(half_w, 230*mm, across_items, mode='shrink')
+        col_d = KeepInFrame(half_w, 230*mm, down_items,   mode='shrink')
+        clue_table = Table([[col_a, col_d]], colWidths=[half_w + 4*mm, half_w + 4*mm])
         clue_table.setStyle(TableStyle([
-            ('VALIGN', (0,0), (-1,-1), 'TOP'),
-            ('LEFTPADDING',  (0,0), (-1,-1), 4),
-            ('RIGHTPADDING', (0,0), (-1,-1), 4),
-            ('LINEAFTER', (0,0), (0,-1), 0.5, colors.HexColor('#cccccc')),
+            ('VALIGN',          (0,0), (-1,-1), 'TOP'),
+            ('LEFTPADDING',     (0,0), (-1,-1), 6),
+            ('RIGHTPADDING',    (0,0), (-1,-1), 6),
+            ('TOPPADDING',      (0,0), (-1,-1), 0),
+            ('BOTTOMPADDING',   (0,0), (-1,-1), 0),
+            ('LINEAFTER',       (0,0), (0,-1), 0.5, colors.HexColor('#cccccc')),
         ]))
         story.append(clue_table)
 
-        # ── 페이지 구분선 + 정답 키 ─────────────────────────────
-        story.append(Spacer(1, 6*mm))
-        story.append(Paragraph("─" * 80, ParagraphStyle('hr', fontName=KOR_FONT,
-                                                          fontSize=6, textColor=colors.HexColor('#aaaaaa'))))
-        story.append(Paragraph("✅  정답 (Answer Key)", heading_style))
+        # ════════════════════════════════════════════════════
+        # 3페이지: 정답
+        # ════════════════════════════════════════════════════
+        story.append(PageBreak())
+        story.append(Paragraph("정답 (Answer Key)", page_title_style))
+        story.append(Paragraph(info_text, sub_style))
+        story.append(Spacer(1, 4*mm))
+
+        # 정답 그리드 (글자 표시)
+        ans_num_style = ParagraphStyle(
+            'kor_ans_num', fontName=KOR_FONT, fontSize=5,
+            textColor=colors.HexColor('#003399'), leading=6,
+        )
+        ans_letter_style = ParagraphStyle(
+            'kor_ans_letter', fontName=KOR_FONT_BOLD, fontSize=int(CELL_MM * 0.55),
+            textColor=colors.HexColor('#0f3460'), alignment=TA_CENTER, leading=int(CELL_MM * 0.7),
+        )
+
+        # 정답 그리드 — 각 셀에 번호+글자 함께 표시
+        ans_table_data = []
+        for r in range(rows):
+            row_data = []
+            for c in range(cols):
+                val = self.current_grid[r][c]
+                if val == '#':
+                    row_data.append('')
+                else:
+                    num_str = str(self.numbered[(r, c)]) if (r, c) in self.numbered else ''
+                    # 번호와 글자를 함께 담은 단락 리스트
+                    cell_content = []
+                    if num_str:
+                        cell_content.append(Paragraph(num_str, ans_num_style))
+                    cell_content.append(Paragraph(val, ans_letter_style))
+                    row_data.append(cell_content)
+            ans_table_data.append(row_data)
+
+        ans_grid = Table(ans_table_data, colWidths=col_widths, rowHeights=row_heights)
+        ans_ts = TableStyle([
+            ('GRID',            (0,0), (-1,-1), 0.7, colors.HexColor('#2d4a7a')),
+            ('VALIGN',          (0,0), (-1,-1), 'TOP'),
+            ('ALIGN',           (0,0), (-1,-1), 'CENTER'),
+            ('LEFTPADDING',     (0,0), (-1,-1), 1),
+            ('TOPPADDING',      (0,0), (-1,-1), 1),
+            ('RIGHTPADDING',    (0,0), (-1,-1), 1),
+            ('BOTTOMPADDING',   (0,0), (-1,-1), 0),
+        ])
+        for r in range(rows):
+            for c in range(cols):
+                if self.current_grid[r][c] == '#':
+                    ans_ts.add('BACKGROUND', (c,r), (c,r), colors.HexColor('#1a1a2e'))
+                    ans_ts.add('GRID',       (c,r), (c,r), 0, colors.HexColor('#1a1a2e'))
+                else:
+                    ans_ts.add('BACKGROUND', (c,r), (c,r), colors.HexColor('#eef4ff'))
+        ans_grid.setStyle(ans_ts)
+
+        if grid_offset > 0:
+            centered_ans = Table([[ans_grid]], colWidths=[avail_w])
+            centered_ans.setStyle(TableStyle([
+                ('ALIGN',           (0,0), (-1,-1), 'CENTER'),
+                ('VALIGN',          (0,0), (-1,-1), 'TOP'),
+                ('LEFTPADDING',     (0,0), (-1,-1), 0),
+                ('RIGHTPADDING',    (0,0), (-1,-1), 0),
+                ('TOPPADDING',      (0,0), (-1,-1), 0),
+                ('BOTTOMPADDING',   (0,0), (-1,-1), 0),
+            ]))
+            story.append(centered_ans)
+        else:
+            story.append(ans_grid)
+
+        # ════════════════════════════════════════════════════
+        # 4페이지: 정답 단어 목록
+        # ════════════════════════════════════════════════════
+        story.append(PageBreak())
+        story.append(Paragraph("정답 단어 목록 (Answer List)", page_title_style))
+        story.append(Paragraph(info_text, sub_style))
+        story.append(Spacer(1, 4*mm))
 
         ans_rows = []
-        for p in sorted(self.current_placed, key=lambda x: x.get('number', 99)):
+        # 번호 오름차순, 같은 번호는 가로(A) → 세로(D) 순
+        for p in sorted(self.current_placed,
+                        key=lambda x: (x.get('number', 99), 0 if x['direction'] == 'A' else 1)):
             d_sym = '→' if p['direction'] == 'A' else '↓'
             ans_rows.append([
-                Paragraph(f"{d_sym} {p.get('number','?')}", clue_style),
+                Paragraph(f"{p.get('number','?')}", clue_style),
+                Paragraph(d_sym, clue_style),
                 Paragraph(p['clue'], clue_style),
                 Paragraph(p['word'], answer_style),
             ])
         if ans_rows:
-            ans_table = Table(ans_rows, colWidths=[14*mm, 100*mm, 35*mm])
-            ans_table.setStyle(TableStyle([
+            # 1열: 번호(최대3자리=18mm), 2열: 화살표(10mm), 3열: 단서, 4열: 정답
+            ans_list_table = Table(ans_rows, colWidths=[18*mm, 10*mm, 100*mm, 40*mm])
+            ans_list_table.setStyle(TableStyle([
                 ('FONTNAME',        (0,0), (-1,-1), KOR_FONT),
-                ('FONTSIZE',        (0,0), (-1,-1), 9),
+                ('FONTSIZE',        (0,0), (-1,-1), 10),
+                ('ALIGN',           (0,0), (1,-1), 'CENTER'),   # 번호·화살표 중앙정렬
                 ('ROWBACKGROUNDS',  (0,0), (-1,-1),
-                 [colors.HexColor('#f0f4ff'), colors.white]),
+                 [colors.HexColor('#eef4ff'), colors.white]),
                 ('GRID',            (0,0), (-1,-1), 0.3, colors.HexColor('#cccccc')),
                 ('VALIGN',          (0,0), (-1,-1), 'MIDDLE'),
-                ('LEFTPADDING',     (0,0), (-1,-1), 4),
-                ('TOPPADDING',      (0,0), (-1,-1), 2),
-                ('BOTTOMPADDING',   (0,0), (-1,-1), 2),
+                ('LEFTPADDING',     (0,0), (-1,-1), 5),
+                ('TOPPADDING',      (0,0), (-1,-1), 3),
+                ('BOTTOMPADDING',   (0,0), (-1,-1), 3),
             ]))
-            story.append(ans_table)
+            story.append(ans_list_table)
 
         doc.build(story)
-
-    # ════════════════════════════════════════════════════════
-    # 인쇄
-    # ════════════════════════════════════════════════════════
-    def _print_puzzle(self):
-        if not self.current_grid:
-            messagebox.showwarning("인쇄 실패", "생성된 퍼즐이 없습니다.")
-            return
-        import tempfile, subprocess, sys
-        tmp = tempfile.mktemp(suffix=".pdf")
-        try:
-            self._create_pdf(tmp)
-            if sys.platform == "win32":
-                os.startfile(tmp, "print")
-            elif sys.platform == "darwin":
-                subprocess.run(["lpr", tmp])
-            else:
-                # Linux
-                result = subprocess.run(["which", "lpr"], capture_output=True)
-                if result.returncode == 0:
-                    subprocess.run(["lpr", tmp])
-                else:
-                    # PDF 뷰어로 열기
-                    subprocess.run(["xdg-open", tmp])
-            messagebox.showinfo("인쇄", "인쇄 대화상자가 열립니다.")
-        except Exception as e:
-            messagebox.showerror("인쇄 오류", f"인쇄 실패:\n{e}\n\nPDF로 저장 후 인쇄해주세요.")
 
 
 # ════════════════════════════════════════════════════════════
